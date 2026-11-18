@@ -84,6 +84,12 @@ import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
 import com.nuvio.tv.ui.screens.player.autosync.AutoSyncedChip
 
 private const val SubtitleOffLanguageKey = "__off__"
+
+/** Menu entry that plays the Chinese track through Hanzi Lens (pinyin, English line, word lookup). */
+private const val HanziLensLanguageKey = "__hanzi_lens__"
+private val HanziChineseLanguageKey: String by lazy { normalizeOverlayLanguageKey("zh") }
+/** Whether Hanzi Lens is on for this show; read by the list builders below. */
+@Volatile private var hanziLensActiveForMenu = false
 private const val SubtitleUnknownLanguageKey = "__unknown__"
 private const val SubtitleFocusTag = "SubtitleFocus"
 
@@ -106,10 +112,13 @@ internal fun SubtitleSelectionOverlay(
     onInternalTrackSelected: (Int) -> Unit,
     onAddonSubtitleSelected: (Subtitle) -> Unit,
     onDisableSubtitles: () -> Unit,
+    hanziSettings: com.nuvio.tv.hanzi.HanziSettings = com.nuvio.tv.hanzi.HanziSettings(),
+    onHanziSettings: ((com.nuvio.tv.hanzi.HanziSettings) -> com.nuvio.tv.hanzi.HanziSettings) -> Unit = {},
     onEvent: (PlayerEvent) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    hanziLensActiveForMenu = hanziSettings.active
     val noneLabel = stringResource(R.string.subtitle_none)
     val unknownLabel = stringResource(R.string.subtitle_language_unknown)
     val builtInLabel = stringResource(R.string.subtitle_built_in)
@@ -129,7 +138,7 @@ internal fun SubtitleSelectionOverlay(
             internalTracks = sessionInternalTracks,
             selectedInternalIndex = sessionSelectedInternalIndex,
             selectedAddonSubtitle = sessionSelectedAddonSubtitle
-        )
+        ).let { key -> if (key == HanziChineseLanguageKey && hanziSettings.active) HanziLensLanguageKey else key }
     }
     val languageItems = remember(visible, sessionAddonSubtitles) {
         buildSubtitleLanguageRailItems(
@@ -193,14 +202,18 @@ internal fun SubtitleSelectionOverlay(
     var selectedOptionId by remember(visible) {
         mutableStateOf(sessionInitialSelectedOptionId)
     }
+    val sessionInitialHanziActive = remember(visible) { hanziSettings.active }
     val subtitleOptions = remember(
         selectedLanguageKey,
         selectedOptionId,
+        hanziSettings.active,
         sessionInternalTracks,
         sessionAddonSubtitles,
         sessionInstalledSubtitleAddonOrder
     ) {
-        if (selectedLanguageKey == sessionInitialLanguageKey && selectedOptionId == sessionInitialSelectedOptionId) {
+        if (selectedLanguageKey == sessionInitialLanguageKey && selectedOptionId == sessionInitialSelectedOptionId &&
+            hanziSettings.active == sessionInitialHanziActive
+        ) {
             sessionInitialSubtitleOptions
         } else {
             buildSessionOptions(selectedLanguageKey, selectedOptionId)
@@ -263,8 +276,15 @@ internal fun SubtitleSelectionOverlay(
             ?: optionFocusMemory[selectedLanguageKey]?.takeIf { id -> subtitleOptions.any { it.id == id } }
             ?: subtitleOptions.firstOrNull()?.id
     }
-    val styleTargetKey = remember(lastStyleFocusKey) {
-        lastStyleFocusKey ?: StyleFocusKey.DelaySet
+    val styleTargetKey = remember(lastStyleFocusKey, selectedLanguageKey) {
+        val hanziShown = selectedLanguageKey == HanziLensLanguageKey
+        when {
+            // The Hanzi Lens switches are the first thing in the column while that entry is open,
+            // and are not there at all otherwise.
+            hanziShown && (lastStyleFocusKey == null || lastStyleFocusKey == StyleFocusKey.DelaySet) -> StyleFocusKey.HanziPinyin
+            !hanziShown && lastStyleFocusKey?.startsWith("hanzi_") == true -> StyleFocusKey.DelaySet
+            else -> lastStyleFocusKey ?: StyleFocusKey.DelaySet
+        }
     }
     val isStyleDisabledByLibass = remember(
         useLibass,
@@ -454,7 +474,10 @@ internal fun SubtitleSelectionOverlay(
                 pendingStyleFocusKey = null
                 return@LaunchedEffect
             }
-            val targetIndex = styleListIndexForFocusKey(targetKey, hasHdrBrightnessItem = isEditingHdrStyle)
+            // The Hanzi Lens card, when shown, is the first item and pushes the others down by one.
+            val hanziCardShown = selectedLanguageKey == HanziLensLanguageKey
+            val targetIndex = if (targetKey.startsWith("hanzi_")) 0 else
+                styleListIndexForFocusKey(targetKey, hasHdrBrightnessItem = isEditingHdrStyle) + if (hanziCardShown) 1 else 0
             repeat(8) { attempt ->
                 styleListState.scrollItemIntoView(targetIndex)
                 Log.d(
@@ -570,6 +593,10 @@ internal fun SubtitleSelectionOverlay(
                             styleEntryOptionId = optionId
                             activeOptionFocusId = optionId
                             activeRail = OverlayFocusRail.OPTION
+                            if (selectedLanguageKey == HanziLensLanguageKey || selectedLanguageKey == HanziChineseLanguageKey) {
+                                val lens = selectedLanguageKey == HanziLensLanguageKey
+                                onHanziSettings { it.copy(active = lens) }
+                            }
                             onInternalTrackSelected(trackIndex)
                             revealStyleRail = true
                         },
@@ -579,6 +606,10 @@ internal fun SubtitleSelectionOverlay(
                             styleEntryOptionId = optionId
                             activeOptionFocusId = optionId
                             activeRail = OverlayFocusRail.OPTION
+                            if (selectedLanguageKey == HanziLensLanguageKey || selectedLanguageKey == HanziChineseLanguageKey) {
+                                val lens = selectedLanguageKey == HanziLensLanguageKey
+                                onHanziSettings { it.copy(active = lens) }
+                            }
                             onAddonSubtitleSelected(subtitle)
                             revealStyleRail = true
                         },
@@ -610,7 +641,9 @@ internal fun SubtitleSelectionOverlay(
                             persistedStyleFocusKey = it
                         },
                         onEvent = onEvent,
-                        isStyleDisabledByLibass = isStyleDisabledByLibass
+                        isStyleDisabledByLibass = isStyleDisabledByLibass,
+                        hanziSettings = hanziSettings.takeIf { selectedLanguageKey == HanziLensLanguageKey },
+                        onHanziSettings = onHanziSettings
                     )
                 }
             }
@@ -821,7 +854,9 @@ private fun SubtitleStyleRail(
     focusRequesters: Map<String, FocusRequester>,
     onStyleFocused: (String) -> Unit,
     onEvent: (PlayerEvent) -> Unit,
-    isStyleDisabledByLibass: Boolean = false
+    isStyleDisabledByLibass: Boolean = false,
+    hanziSettings: com.nuvio.tv.hanzi.HanziSettings? = null,
+    onHanziSettings: ((com.nuvio.tv.hanzi.HanziSettings) -> com.nuvio.tv.hanzi.HanziSettings) -> Unit = {}
 ) {
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val moveLeftKey = if (isRtl) android.view.KeyEvent.KEYCODE_DPAD_RIGHT else android.view.KeyEvent.KEYCODE_DPAD_LEFT
@@ -844,6 +879,41 @@ private fun SubtitleStyleRail(
             modifier = Modifier
                 .heightIn(max = 720.dp)
         ) {
+            if (hanziSettings != null) {
+                item(key = "hanzi_lens") {
+                    OverlaySectionCard(title = "Hanzi Lens") {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ToggleChip(
+                                label = "Pinyin: " + if (hanziSettings.pinyin) "On" else "Off",
+                                isEnabled = hanziSettings.pinyin,
+                                onMoveLeft = onMoveLeft,
+                                focusRequester = focusRequesters[StyleFocusKey.HanziPinyin],
+                                focusKey = StyleFocusKey.HanziPinyin,
+                                onFocused = onStyleFocused,
+                                onClick = { onHanziSettings { it.copy(pinyin = !it.pinyin) } }
+                            )
+                            ToggleChip(
+                                label = "English line: " + if (hanziSettings.english) "On" else "Off",
+                                isEnabled = hanziSettings.english,
+                                onMoveLeft = onMoveLeft,
+                                focusRequester = focusRequesters[StyleFocusKey.HanziEnglish],
+                                focusKey = StyleFocusKey.HanziEnglish,
+                                onFocused = onStyleFocused,
+                                onClick = { onHanziSettings { it.copy(english = !it.english) } }
+                            )
+                            ToggleChip(
+                                label = "Word lookup (Up): " + if (hanziSettings.lookup) "On" else "Off",
+                                isEnabled = hanziSettings.lookup,
+                                onMoveLeft = onMoveLeft,
+                                focusRequester = focusRequesters[StyleFocusKey.HanziLookup],
+                                focusKey = StyleFocusKey.HanziLookup,
+                                onFocused = onStyleFocused,
+                                onClick = { onHanziSettings { it.copy(lookup = !it.lookup) } }
+                            )
+                        }
+                    }
+                }
+            }
             item {
                 Card(
                     onClick = { dispatchStyleEvent(PlayerEvent.OnShowSubtitleDelayOverlay) },
@@ -1800,6 +1870,9 @@ internal object StyleFocusKey {
     const val ShadowOpacityIncrease = "shadow_opacity_increase"
     const val ShadowSizeDecrease = "shadow_size_decrease"
     const val ShadowSizeIncrease = "shadow_size_increase"
+    const val HanziPinyin = "hanzi_pinyin"
+    const val HanziEnglish = "hanzi_english"
+    const val HanziLookup = "hanzi_lookup"
 }
 
 private enum class OverlayFocusRail {
@@ -1870,7 +1943,10 @@ private fun rememberStyleFocusRequesters(): Map<String, FocusRequester> {
             StyleFocusKey.ShadowOpacityDecrease,
             StyleFocusKey.ShadowOpacityIncrease,
             StyleFocusKey.ShadowSizeDecrease,
-            StyleFocusKey.ShadowSizeIncrease
+            StyleFocusKey.ShadowSizeIncrease,
+            StyleFocusKey.HanziPinyin,
+            StyleFocusKey.HanziEnglish,
+            StyleFocusKey.HanziLookup
         ).associateWith { FocusRequester() } +
             SubtitleTextColorPresets.associate { color ->
                 "${StyleFocusKey.TextColorPrefix}:${color.toArgb()}" to FocusRequester()
@@ -1971,13 +2047,19 @@ private fun buildSubtitleLanguageRailItems(
             )
         }
 
+    val chineseCount = counts[HanziChineseLanguageKey] ?: 0
+    val hanziItems = if (chineseCount > 0) {
+        listOf(SubtitleLanguageRailItem(key = HanziLensLanguageKey, label = "Hanzi Lens", count = chineseCount))
+    } else {
+        emptyList()
+    }
     return listOf(
         SubtitleLanguageRailItem(
             key = SubtitleOffLanguageKey,
             label = noneLabel,
             count = 0
         )
-    ) + sortedItems
+    ) + hanziItems + sortedItems
 }
 
 private fun preferredOverlayLanguageOrder(
@@ -2008,6 +2090,14 @@ private fun buildSubtitleOptionRailItems(
     forcedLabel: String
 ): List<SubtitleOptionRailItem> {
     if (selectedLanguageKey == SubtitleOffLanguageKey) return emptyList()
+    @Suppress("NAME_SHADOWING")
+    val selectedOptionId = when (selectedLanguageKey) {
+        HanziLensLanguageKey -> selectedOptionId.takeIf { hanziLensActiveForMenu }
+        HanziChineseLanguageKey -> selectedOptionId.takeIf { !hanziLensActiveForMenu }
+        else -> selectedOptionId
+    }
+    @Suppress("NAME_SHADOWING")
+    val selectedLanguageKey = if (selectedLanguageKey == HanziLensLanguageKey) HanziChineseLanguageKey else selectedLanguageKey
 
     val addonOrderMap = installedAddonOrder.withIndex().associate { (index, name) -> name to index }
     fun toAddonItem(subtitle: Subtitle): SubtitleOptionRailItem {

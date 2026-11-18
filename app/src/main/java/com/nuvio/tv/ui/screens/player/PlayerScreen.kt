@@ -660,6 +660,42 @@ fun PlayerScreen(
     // the video surface and its subtitles are never inside this layer.
     val playerControlsDim = Modifier.playerControlsBrightness(uiState.playerControlsBrightness)
 
+    // ---- Hanzi Lens: pinyin subtitles and remote-driven word lookup ----
+    val hanziLens = viewModel.controller.hanzi
+    val hanziLine by hanziLens.line.collectAsState()
+    val hanziLookup by hanziLens.lookup.collectAsState()
+    val hanziSecondary by hanziLens.secondary.collectAsState()
+    val hanziSettings by hanziLens.settings.collectAsState()
+    val hanziContext = LocalContext.current
+    var hanziResumeOnExit by remember { mutableStateOf(false) }
+    var hanziSwallowKeyUp by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        hanziLens.attach(hanziContext, viewModel.controller.contentId)
+        withContext(Dispatchers.IO) { com.nuvio.tv.hanzi.HanziLens.warmUp(hanziContext) }
+        viewModel.controller.refreshStyledSubtitles()
+    }
+    LaunchedEffect(hanziLookup == null) {
+        // Lookup ended (by key, or because the line changed): resume if lookup paused playback.
+        if (hanziLookup == null && hanziResumeOnExit) {
+            hanziResumeOnExit = false
+            viewModel.exoPlayer?.play()
+        }
+    }
+    val enterHanziLookup: () -> Boolean = {
+        if (hanziLens.enterLookup()) {
+            val player = viewModel.exoPlayer
+            // playWhenReady, not isPlaying: while the stream is buffering isPlaying is false, and the
+            // line would move on as soon as buffering ends.
+            if (player != null && player.playWhenReady) {
+                hanziResumeOnExit = true
+                player.pause()
+            }
+            true
+        } else {
+            false
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -667,6 +703,27 @@ fun PlayerScreen(
             .focusRequester(containerFocusRequester)
             .focusable(enabled = uiState.error == null)
             .onPreviewKeyEvent { keyEvent ->
+                if (hanziLens.isLookingUp) {
+                    val code = keyEvent.nativeKeyEvent.keyCode
+                    if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
+                        hanziSwallowKeyUp = code
+                        when (code) {
+                            KeyEvent.KEYCODE_DPAD_LEFT -> hanziLens.move(-1)
+                            KeyEvent.KEYCODE_DPAD_RIGHT -> hanziLens.move(1)
+                            KeyEvent.KEYCODE_DPAD_UP -> Unit
+                            else -> if (keyEvent.nativeKeyEvent.repeatCount == 0) hanziLens.exitLookup()
+                        }
+                    }
+                    return@onPreviewKeyEvent true
+                }
+                if (hanziSwallowKeyUp != 0 && keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_UP &&
+                    keyEvent.nativeKeyEvent.keyCode == hanziSwallowKeyUp
+                ) {
+                    // The release of the key that closed lookup must not reach the player (Back would exit).
+                    hanziSwallowKeyUp = 0
+                    return@onPreviewKeyEvent true
+                }
+
                 // Consume the confirm KEY_UP that opened the subtitle timing dialog before
                 // the newly focused "Sync" button can treat it as a second click. Preview
                 // is required: after open, focus moves into the dialog so onKeyEvent on
@@ -908,7 +965,9 @@ fun PlayerScreen(
                             }
                         }
                         KeyEvent.KEYCODE_DPAD_UP -> {
-                                if (!uiState.showControls) {
+                                if (!uiState.showControls && hanziLens.lookupAllowed && hanziLens.hasLine && enterHanziLookup()) {
+                                    hanziSwallowKeyUp = KeyEvent.KEYCODE_DPAD_UP
+                                } else if (!uiState.showControls) {
                                     viewModel.onEvent(PlayerEvent.OnToggleControls)
                                 } else {
                                     try {
@@ -1283,6 +1342,20 @@ fun PlayerScreen(
                         style = renderedSubtitleStyle,
                         textSizePx = subtitleTextMetrics?.textSizePx ?: fallbackSubtitleTextSizePx,
                         liftPx = subtitleLiftPx,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    com.nuvio.tv.hanzi.HanziSubtitleOverlay(
+                        line = hanziLine,
+                        secondary = hanziSecondary,
+                        settings = hanziSettings,
+                        lookup = hanziLookup,
+                        textSizePx = subtitleTextMetrics?.textSizePx ?: fallbackSubtitleTextSizePx,
+                        bottomInset = { heightPx ->
+                            subtitleBottomPlacement(heightPx, renderedSubtitleStyle.verticalOffset, subtitleLiftPx).insetPx(heightPx)
+                        },
+                        textColor = Color(renderedSubtitleStyle.textColor),
+                        outlineColor = Color(renderedSubtitleStyle.outlineColor),
+                        bold = renderedSubtitleStyle.bold,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -2136,6 +2209,11 @@ fun PlayerScreen(
             onInternalTrackSelected = { viewModel.onEvent(PlayerEvent.OnSelectSubtitleTrack(it)) },
             onAddonSubtitleSelected = { viewModel.onEvent(PlayerEvent.OnSelectAddonSubtitle(it)) },
             onDisableSubtitles = { viewModel.onEvent(PlayerEvent.OnDisableSubtitles) },
+            hanziSettings = hanziSettings,
+            onHanziSettings = { change ->
+                hanziLens.update(change)
+                viewModel.controller.refreshStyledSubtitles()
+            },
             onEvent = { viewModel.onEvent(it) },
             onDismiss = { viewModel.onEvent(PlayerEvent.OnDismissTransientOverlay) },
             modifier = Modifier
