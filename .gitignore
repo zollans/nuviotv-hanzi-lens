@@ -63,3 +63,7 @@ AGENTS.md
 /PR.md
 docs/
 status-page/
+
+# Hanzi Lens fork
+/dist/
+*.log

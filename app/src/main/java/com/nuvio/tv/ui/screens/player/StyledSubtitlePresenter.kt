@@ -55,6 +55,9 @@ internal class StyledSubtitlePresenter {
     val cues: StateFlow<StyledSubtitleCues> = mutableCues.asStateFlow()
     private var lastCues: List<Cue> = emptyList()
 
+    /** Hanzi Lens takes Chinese cues before either stock renderer sees them. */
+    var hanzi: com.nuvio.tv.hanzi.HanziLens? = null
+
     fun present(cues: List<Cue>, styled: Boolean): List<Cue> {
         lastCues = cues
         return route(styled)
@@ -69,9 +72,11 @@ internal class StyledSubtitlePresenter {
     fun clear() {
         lastCues = emptyList()
         mutableCues.value = StyledSubtitleCues()
+        hanzi?.clear()
     }
 
     private fun route(styled: Boolean): List<Cue> {
+        val lastCues = hanzi?.take(lastCues) ?: lastCues
         if (!styled) {
             mutableCues.value = StyledSubtitleCues()
             return lastCues

@@ -1,3 +1,5 @@
+> **Unofficial fork.** This is the Hanzi Lens fork of NuvioTV: pinyin, an English line and remote-controlled word lookup on Chinese subtitles. See [HANZI-LENS.md](HANZI-LENS.md) for what changed. It is not affiliated with or endorsed by the Nuvio project. The original README follows.
+
 <div align="center">
 
   <img src="assets/brand/app_logo_wordmark.png" alt="Nuvio" width="300" />

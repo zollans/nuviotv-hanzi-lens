@@ -795,12 +795,19 @@ internal fun PlayerRuntimeController.initializePlayer(
                     } else {
                         params
                     }
-                    return super.selectAllTracks(
+                    val definitions = super.selectAllTracks(
                         mappedTrackInfo,
                         rendererFormatSupports,
                         rendererMixedMimeTypeAdaptationSupports,
                         selectionParams
                     )
+                    // Hanzi Lens: also decode the file's English track when Chinese is selected.
+                    return try {
+                        com.nuvio.tv.hanzi.HanziSecondTrack.attachEnglish(true, mappedTrackInfo, rendererFormatSupports, definitions, selectionParams)
+                    } catch (t: Throwable) {
+                        Log.w("HanziLens", "second subtitle track not attached", t)
+                        definitions
+                    }
                 }
             }.apply {
                 setParameters(buildUponParameters().setAllowInvalidateSelectionsOnRendererCapabilitiesChange(true))
@@ -980,7 +987,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                     updateAudioControlAvailability()
                 },
                 onCuesShown = subtitleCueTracker::update,
-                presentCues = { cues -> presentExoCues(cues) }
+                presentCues = { cues -> presentExoCues(cues) },
+                secondaryCues = { cues -> hanzi.showSecondary(cues) }
             ).setExtensionRendererMode(effectiveDecoderPriority)
                 .setEnableDecoderFallback(true)
                 .setMediaCodecSelector(codecSelector)
@@ -2276,7 +2284,8 @@ private class SubtitleOffsetRenderersFactory(
     private val onPlaybackSpeedAwareAudioSinkCreated: (PlaybackSpeedAwareAudioSink) -> Unit,
     private val onFfmpegAudioRendererChanged: (FfmpegAudioRenderer?) -> Unit,
     private val onCuesShown: (List<Cue>) -> Unit = {},
-    private val presentCues: (List<Cue>) -> List<Cue> = { it }
+    private val presentCues: (List<Cue>) -> List<Cue> = { it },
+    private val secondaryCues: (List<Cue>) -> Unit = {}
 ) : DefaultRenderersFactory(context) {
 
     override fun buildVideoRenderers(
@@ -2425,7 +2434,23 @@ private class SubtitleOffsetRenderersFactory(
                 subtitleDelayUsProvider = subtitleDelayUsProvider,
                 audioDelayUsProvider = audioDelayUsProvider
             )
+        }        // Hanzi Lens: a second text renderer for the translation track. The track selector only
+        // gives it a track when the main subtitle is Chinese and the file has English text.
+        val secondOutput = object : TextOutput {
+            override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) = secondaryCues(cueGroup.cues)
+
+            @Deprecated("Uses the deprecated Media3 callback for text outputs.")
+            override fun onCues(cues: List<Cue>) = Unit
         }
+        out.add(
+            com.nuvio.tv.hanzi.HanziSecondTrack.Renderer(
+                SubtitleOffsetRenderer(
+                    baseRenderer = androidx.media3.exoplayer.text.TextRenderer(secondOutput, outputLooper),
+                    subtitleDelayUsProvider = subtitleDelayUsProvider,
+                    audioDelayUsProvider = audioDelayUsProvider
+                )
+            )
+        )
     }
 
     private fun applyFfmpegRendererSettings(out: ArrayList<Renderer>) {
