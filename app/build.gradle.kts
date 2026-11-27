@@ -654,3 +654,29 @@ dependencies {
 extra["usenetSdkDirectory"] = android.sdkDirectory.absolutePath
 extra["usenetNdkVersion"] = android.ndkVersion
 apply(from = rootProject.file("native/usenet/android.gradle.kts"))
+
+// ---- Hanzi Lens fork: releases and in-app updates (see HANZI-LENS.md) ----
+// Fork builds are versioned "<upstream version>.hanzi.N" (or "-hanzi.N" on a stable upstream version)
+// with version code upstream * 100 + N, so each fork release ranks above the upstream build it is based on.
+// N is HANZI_REVISION in hanzi-release.properties; tools/hanzi-release.sh sets it when it publishes.
+val hanziRevision = Properties().apply {
+    rootProject.file("hanzi-release.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}.getProperty("HANZI_REVISION", "1").trim().toInt()
+require(hanziRevision in 1..99) { "HANZI_REVISION must be between 1 and 99" }
+android.defaultConfig {
+    val upstreamVersionName = versionName!!
+    versionName = upstreamVersionName + (if ('-' in upstreamVersionName) "." else "-") + "hanzi.$hanziRevision"
+    versionCode = versionCode!! * 100 + hanziRevision
+}
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        // The in-app updater reads the fork's GitHub releases instead of NuvioMedia/NuvioTV.
+        variant.buildConfigFields?.put("GITHUB_OWNER", com.android.build.api.variant.BuildConfigField("String", "\"zollans\"", null))
+        variant.buildConfigFields?.put("GITHUB_REPO", com.android.build.api.variant.BuildConfigField("String", "\"nuviotv-hanzi-lens\"", null))
+    }
+    // The fork ships the debug build type for its separate package (com.nuviodebug.com, next to the
+    // official app), but runs it like a release: in-app updates on, no Debug settings page.
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.buildConfigFields?.put("IS_DEBUG_BUILD", com.android.build.api.variant.BuildConfigField("boolean", "false", null))
+    }
+}

@@ -29,13 +29,25 @@ Made in November 2026 on top of upstream commit `3ff5e2b`.
 - New: `app/src/main/java/com/nuvio/tv/hanzi/` — dictionary (`HanziDictionary`), state (`HanziLens`), per-show settings (`HanziSettings`), English second track (`HanziSecondTrack`), drawing and the lookup card (`HanziSubtitleOverlay`)
 - New: `app/src/main/assets/hanzi/` — dictionary data, built by `tools/build-hanzi-assets.js`
 - Modified: `StyledSubtitlePresenter` (hands Chinese cues to Hanzi Lens), `PlayerRuntimeController` and `PlayerRuntimeControllerInitialization` (own the state, add the second text renderer), `PlayerScreen` (overlay and remote keys), `SubtitleSelectionOverlay` (menu entry and switches)
+- Modified: `app/build.gradle.kts` (a block at the end: fork version numbers, updates from this repo's releases, and the debug build type run like a release)
+- New: `hanzi-release.properties`, `tools/hanzi-release.sh`, `tools/hanzi-upstream.sh` (releases, below)
 
 ## Build
 
     echo "sdk.dir=<Android SDK path>" > local.properties
     ./gradlew :app:assembleFullDebug
 
-APKs land in `app/build/outputs/apk/full/debug/`. The debug build installs as a separate app (`com.nuviodebug.com`) next to official Nuvio and is signed with your local debug key, so it cannot update, or be updated by, official builds.
+APKs land in `app/build/outputs/apk/full/debug/`. The fork ships the debug build type because it installs as a separate app (`com.nuviodebug.com`) next to official Nuvio, but it behaves like a release build: in-app updates on, no Debug settings page. Official builds can't update it or be updated by it.
+
+## Releases and updates
+
+The in-app updater reads this repo's GitHub releases (zollans/nuviotv-hanzi-lens), not NuvioMedia/NuvioTV. Fork versions are `<upstream version>.hanzi.N` (`-hanzi.N` on a stable upstream version) with version code `upstream × 100 + N`, so each one ranks above the upstream build it is based on. N is `HANZI_REVISION` in `hanzi-release.properties`.
+
+    tools/hanzi-upstream.sh            # new upstream commits on origin/dev, and do they merge cleanly?
+    tools/hanzi-upstream.sh --merge    # merge them and push, only when clean (exit 3 = conflicts)
+    tools/hanzi-release.sh             # build, bump N, push, publish the APKs as a GitHub release
+
+`hanzi-release.sh` does nothing when nothing has changed since the last release. Build releases on the machine that holds the signing keystore and `local.properties`; an APK signed with a different key can't update the installed app.
 
 ## Install on Fire TV / Android TV
 
