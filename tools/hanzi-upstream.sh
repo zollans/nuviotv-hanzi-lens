@@ -1,7 +1,7 @@
 #!/bin/bash
 # Check the upstream branch for new commits and whether they merge cleanly into hanzi-lens.
 #   tools/hanzi-upstream.sh          report only
-#   tools/hanzi-upstream.sh --merge  when clean, also merge them and push hanzi-lens
+#   tools/hanzi-upstream.sh --merge  when clean, also merge them (locally; hanzi-release.sh pushes after a good build)
 # Exit status: 0 up to date or clean (merged with --merge), 3 conflicts (nothing changed), other: error.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -43,5 +43,4 @@ if ! $merge; then
   exit 0
 fi
 git merge --quiet --no-edit -m "Merge upstream $UPSTREAM ($(git rev-parse --short "$UPSTREAM")) into $BRANCH" "$UPSTREAM"
-git push --quiet "$REMOTE" "$BRANCH"
-echo "STATUS: merged $UPSTREAM and pushed $BRANCH ($(git rev-parse --short HEAD))"
+echo "STATUS: merged $UPSTREAM into $BRANCH locally ($(git rev-parse --short HEAD), was $(git rev-parse --short HEAD^1)); not pushed"

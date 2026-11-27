@@ -44,10 +44,10 @@ APKs land in `app/build/outputs/apk/full/debug/`. The fork ships the debug build
 The in-app updater reads this repo's GitHub releases (zollans/nuviotv-hanzi-lens), not NuvioMedia/NuvioTV. Fork versions are `<upstream version>.hanzi.N` (`-hanzi.N` on a stable upstream version) with version code `upstream × 100 + N`, so each one ranks above the upstream build it is based on. N is `HANZI_REVISION` in `hanzi-release.properties`.
 
     tools/hanzi-upstream.sh            # new upstream commits on origin/dev, and do they merge cleanly?
-    tools/hanzi-upstream.sh --merge    # merge them and push, only when clean (exit 3 = conflicts)
+    tools/hanzi-upstream.sh --merge    # merge them locally, only when clean (exit 3 = conflicts)
     tools/hanzi-release.sh             # build, bump N, push, publish the APKs as a GitHub release
 
-`hanzi-release.sh` does nothing when nothing has changed since the last release. Build releases on the machine that holds the signing keystore and `local.properties`; an APK signed with a different key can't update the installed app.
+`hanzi-release.sh` pushes the branch only after a successful build, and does nothing when nothing has changed since the last release. Build releases on the machine that holds the signing keystore and `local.properties`; an APK signed with a different key can't update the installed app.
 
 ## Install on Fire TV / Android TV
 
